@@ -19,7 +19,7 @@ export default function Settings({ v }: Props) {
             <div style={{"fontSize":"14px","color":"var(--dim)","marginTop":"9px"}}>
               {"How Pulse is set up for "}
               {txt(v.admin?.company)}
-              {" — people, permissions, systems and governance."}
+              {", people, permissions, systems and governance."}
             </div>
           </div>
           <button className="ix10" style={{"flex":"none","height":"36px","display":"flex","alignItems":"center","gap":"8px","padding":"0 15px","background":"var(--chip)","border":"1px solid var(--chip-border)","borderRadius":"var(--r-ctl,13px)","fontSize":"13px","color":"var(--body)","cursor":"pointer","transition":"border-color .2s var(--ease),color .2s var(--ease)"}}>

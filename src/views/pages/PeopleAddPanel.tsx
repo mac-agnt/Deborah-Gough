@@ -38,7 +38,7 @@ export default function PeopleAddPanel({ v }: Props) {
                   {txt(v.admin?.panel?.people?.grantCount)}
                 </span>
               </div>
-              <input value={v.admin?.panel?.people?.roleDraft?.name ?? ""} onChange={v.admin?.panel?.people?.setRoleName} placeholder="Name this type — e.g. Yard supervisor" style={{"width":"100%","height":"34px","marginTop":"11px","padding":"0 12px","background":"var(--surface)","border":"1px solid var(--border)","borderRadius":"var(--r-md,12px)","outline":"0","fontSize":"12.5px","color":"var(--ink)"}} />
+              <input value={v.admin?.panel?.people?.roleDraft?.name ?? ""} onChange={v.admin?.panel?.people?.setRoleName} placeholder="Name this type, e.g. Yard supervisor" style={{"width":"100%","height":"34px","marginTop":"11px","padding":"0 12px","background":"var(--surface)","border":"1px solid var(--border)","borderRadius":"var(--r-md,12px)","outline":"0","fontSize":"12.5px","color":"var(--ink)"}} />
               <div style={{"fontFamily":"var(--mono)","fontSize":"9px","letterSpacing":"0.13em","color":"var(--faint)","marginTop":"13px"}}>
                 {"SCOPE"}
               </div>

@@ -50,7 +50,7 @@ export default function Dashboard({ v }: Props) {
                 </button>
               </div>
               <div style={{"fontSize":"12.5px","color":"var(--dim)","marginTop":"6px"}}>
-                {"Type anything about the business as a filter — a region, a project, a customer segment — and Pulse builds a live metric set for it. Pick a registered dimension below, or name your own."}
+                {"Type anything about the business as a filter, a region, a project, a customer segment, and Pulse builds a live metric set for it. Pick a registered dimension below, or name your own."}
               </div>
               {arr(v.filterGroups).map((g: any, i91: number) => (
                 <Fragment key={i91}>

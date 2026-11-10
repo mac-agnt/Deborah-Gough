@@ -65,6 +65,9 @@ import {
   hexRGB,
   buildGraph
 } from "./data";
+import { applyClinic, clinicContextNav, connect as connectClinic, paletteSearch, syncKpis, isLightTheme } from "../clinic/bridge";
+import { go as clinicGo } from "../clinic/store";
+import { SNAPSHOT } from "../clinic/format";
 
 /* ── Locked layout ──────────────────────────────────────────────────────────
    These two rules hold for every client build, whatever data.js says:
@@ -86,7 +89,7 @@ const NAV = (() => {
 
 /* All state and behaviour for Pulse. renderVals() returns the flat object the views render from. */
 export default class PulseLogic extends DCLogic {
-  state = { w: typeof window === "undefined" ? 1440 : window.innerWidth, theme:"harbour", page:"Home", draft:"", query:"", thread:[], typed:0, paletteOpen:false, showNotifs:false, palScope:"All", palSel:0, palRecent:["Dunne & Sons Ltd","Credit Control"],
+  state = { w: typeof window === "undefined" ? 1440 : window.innerWidth, theme:"milltown", darkTheme:"harbour", ctab:{}, page:"Home", draft:"", query:"", thread:[], typed:0, paletteOpen:false, showNotifs:false, palScope:"All", palSel:0, palRecent:["Aoife Murphy","Booking Agent"],
             done:{}, resolved:{}, approved:{}, inboxFilter:"All", approvalFilter:"Awaiting you", open:null, range:"30d",
             workDoc:null, workDocTab:"work",
             queue:"mine", recordTab:"Overview", record:"person", hovered:null, hoverLabel:"", hoverHint:"", hoverTop:0,
@@ -97,19 +100,19 @@ export default class PulseLogic extends DCLogic {
             adminOpen:null, adminFlags:{}, adminGroup:null,
             actPaused:false, actHover:null, actKpi:"all", actQuery:"", actOpen:null, actTick:0,
             recSection:"ontology", recAsk:"", treeOpen:true, treeExpanded:{}, treeFile:"fl-1", treeQuery:"",
-            ontoNode:"Organisation", ontoHover:null, ontoLayout:"Force",
+            ontoNode:"Patient", ontoHover:null, ontoLayout:"Force",
             newRecOpen:false, newRecName:"", newRecTemplate:"Field sheet", newRecCat:"All",
             opsFilter:"all", opsOff:{}, opsOpen:null, opsScope:"week", opsDay:26, opsOrder:null, opsDrag:null,
             opsBuilderOpen:false, opsBuilderMode:"workflow", builderText:"", builderGenerated:false,
-            railOpen:true, barOpen:true, chatRailPinned:false, widgetEdit:false, widgets:["inbox","work","activity"],
-            kpiEdit:false, kpiKeys:["revenue","cash","overdue","margin","jobs"],
-            aspect:"sales", filterMenuOpen:false, customFilter:"", extraFilters:[],
+            railOpen: typeof window === "undefined" ? true : window.innerWidth >= 900, barOpen: typeof window === "undefined" ? true : window.innerWidth >= 700, chatRailPinned:false, widgetEdit:false, widgets:["inbox","visits","work","activity"],
+            kpiEdit:false, kpiKeys:["week","today","receipts","drafts","local"],
+            aspect:"bookings", filterMenuOpen:false, customFilter:"", extraFilters:[],
             workWidget:"queue", miniOpen:false, miniThread:[], miniDraft:"", miniTab:"chat", miniTone:"plain", miniWorkOpen:"tasks",
             agents:AGENT_DEFS, agentId:"briefing", groupNames:{}, agentQuery:"", agentDraft:"", agentExtra:{},
             builderOpen:false, builderMode:"new", trained:false, training:false, trainPhase:0,
             briefThread:[], briefDraft:"", briefPicks:{},
             agentSpec:{name:"", shape:"crown-pebble", tint:"#191c1f", persona:"", personality:"Straight-talking",
-                   answer:"Short answers", context:["Organisations","Tasks"], skills:["Search records","Summarise activity"], tasks:[]} };
+                   answer:"Short answers", context:["Appointments","Tasks"], skills:["Search records","Summarise activity"], tasks:[]} };
 
   /* One event per stream on its own cadence, so the three columns never move in
      lockstep. A hovered column and a paused view are both simply skipped. */
@@ -166,7 +169,7 @@ export default class PulseLogic extends DCLogic {
 
   /* Keyword search: match the query against cluster names, then trace a real
      path between two matches (or around one, if only a single cluster hits)
-     using the same Dijkstra the ambient sparks use — so the result is an
+     using the same Dijkstra the ambient sparks use, so the result is an
      actual route through the graph, not a fake highlight. */
   matchClusters(q){
     const words = q.toLowerCase().split(/[^a-z]+/).filter(Boolean);
@@ -204,7 +207,7 @@ export default class PulseLogic extends DCLogic {
       return;
     }
 
-    // A single match fans out several routes at once — everything the graph
+    // A single match fans out several routes at once, everything the graph
     // has connected to that topic, not just one path to one other record.
     const hub = hubOf(hits[0]);
     const fanCount = Math.min(5, Math.max(3, hub.length));
@@ -266,7 +269,7 @@ export default class PulseLogic extends DCLogic {
 
   clearOntoQuery(){ this.setState({ontoQuery:"", ontoResult:null}); this.planSearch(); }
 
-  /* The node closest to the origin — every inbound trace converges here. */
+  /* The node closest to the origin, every inbound trace converges here. */
   centreNode(){
     if (this._centre !== undefined) return this._centre;
     const nodes = this.graph.nodes;
@@ -477,8 +480,12 @@ export default class PulseLogic extends DCLogic {
     const now = this.clock || 0;
     if (!this._css || now - this._cssAt > 600){
       const cs = getComputedStyle(cv);
-      const dk = cs.getPropertyValue("--ink").trim() !== "#16181c";
-      this._css = {dark:dk, pathInk: dk ? "#ffffff" : "#16181c",
+      // Dark when the theme background is dark (works for every theme, not one ink value).
+      const bgHex = cs.getPropertyValue("--bg").trim();
+      const m = /^#([0-9a-f]{6})$/i.exec(bgHex);
+      const lum = m ? (parseInt(m[1].slice(0, 2), 16) * 0.299 + parseInt(m[1].slice(2, 4), 16) * 0.587 + parseInt(m[1].slice(4, 6), 16) * 0.114) : 0;
+      const dk = lum < 128;
+      this._css = {dark:dk, pathInk: dk ? "#ffffff" : (cs.getPropertyValue("--ink").trim() || "#16181c"),
         matchInk: cs.getPropertyValue("--accent").trim() || "#c8f04b"};
       this._cssAt = now;
     }
@@ -900,7 +907,7 @@ export default class PulseLogic extends DCLogic {
     ctx.globalAlpha = 1;
     ctx.textAlign = "left";
 
-    // the bloom bed, scaled back over the scene (dark themes only — on paper the
+    // the bloom bed, scaled back over the scene (dark themes only, on paper the
     // stamps already landed source-over)
     if (!bloom.light){
       ctx.globalCompositeOperation = "lighter";
@@ -972,11 +979,12 @@ export default class PulseLogic extends DCLogic {
   // character down and swings the new one up. Results are cached per stamp so
   // repeat renders inside one tick don't cancel a flip mid-air.
   buildFlipUnits(BODY, INK, LIME){
-    const now = new Date();
-    const DAY = ["SUN","MON","TUE","WED","THU","FRI","SAT"][now.getDay()];
-    const MON = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"][now.getMonth()];
-    const target = (DAY + String(now.getDate()).padStart(2,"0") + MON
-      + String(now.getHours()).padStart(2,"0") + String(now.getMinutes()).padStart(2,"0")).split("");
+    // The demo runs on a fixed snapshot (Tue 10 Nov 2026, 08:30 Europe/Dublin).
+    const [sy, sm, sd] = SNAPSHOT.date.split("-").map(Number);
+    const snap = new Date(Date.UTC(sy, sm - 1, sd));
+    const DAY = ["SUN","MON","TUE","WED","THU","FRI","SAT"][snap.getUTCDay()];
+    const MON = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"][sm - 1];
+    const target = (DAY + String(sd).padStart(2,"0") + MON + SNAPSHOT.time.replace(":", "")).split("");
     if (!this._flapMount) this._flapMount = Date.now();
     const el = Date.now() - this._flapMount;
     const settleAt = i => 200 + i * 75 + 200;
@@ -1031,7 +1039,7 @@ export default class PulseLogic extends DCLogic {
       if (asked < BRIEF_QUESTIONS.length){
         thread.push({kind:"msg", role:"agent",
           text: asked === 0
-            ? "\u201c" + text + "\u201d — I can do that. First, what should it cover?"
+            ? "\u201c" + text + "\u201d, I can do that. First, what should it cover?"
             : "Noted. One more: when should it land?"});
         thread.push({kind:"card", q:asked, done:false});
       } else {
@@ -1093,7 +1101,7 @@ export default class PulseLogic extends DCLogic {
   }
   /* A timer, not rAF: background/hidden frames throttle rAF to nothing and the
      count would freeze part-way through. */
-  /* Shared by the picker, drag-and-drop and paste — the file dialog can be
+  /* Shared by the picker, drag-and-drop and paste, the file dialog can be
      blocked in an embedded frame, so there is always another way in. */
   readBgFile(f){
     if (!f || !/^image\//.test(f.type || "")) return;
@@ -1122,7 +1130,7 @@ export default class PulseLogic extends DCLogic {
     return "You are " + (s.agentSpec.name || "this agent") + " inside Pulse.\n"
       + "Voice: " + s.agentSpec.personality.toLowerCase() + ". " + s.agentSpec.answer.toLowerCase() + ".\n"
       + "You read the whole ontology through registered tools only, filtered by the grants of whoever is asking.\n"
-      + "This client says merchant, not organisation, and job, not task. Money is in euro.\n"
+      + "This is a sole-trader aesthetics clinic run by Deborah, a nurse. Money is in euro. Never give clinical advice.\n"
       + "Never act on anything with an effect. Propose it and wait for a yes.";
   }
   sendTune(){
@@ -1132,7 +1140,7 @@ export default class PulseLogic extends DCLogic {
       tuneDraft:"",
       tuneThread: (prev.tuneThread || []).concat([
         {role:"you", text},
-        {role:"agent", text:"Done — I pinned that to my prompt. It takes effect on the next run."}
+        {role:"agent", text:"Done, I pinned that to my prompt. It takes effect on the next run."}
       ]),
       sysPrompt: this.systemPrompt(prev) + "\n" + text
     }));
@@ -1159,6 +1167,7 @@ export default class PulseLogic extends DCLogic {
   }
 
   componentDidMount(){
+    this._clinicUnsub = connectClinic(this);
     requestAnimationFrame(() => this.syncRailThumb());
     setTimeout(() => this.syncRailThumb(), 700);
     setTimeout(() => { const nav = document.querySelector('nav[data-rail-nav]');
@@ -1216,7 +1225,7 @@ export default class PulseLogic extends DCLogic {
     };
     window.addEventListener("paste", this._paste);
   }
-  componentWillUnmount(){ window.removeEventListener("paste", this._paste); window.removeEventListener("resize", this._resize); window.removeEventListener("keydown", this._key); clearInterval(this._t); clearInterval(this._clockTimer); clearInterval(this._flapBoot); cancelAnimationFrame(this._raf); clearInterval(this._fallback); clearInterval(this._actTimer); clearInterval(this._kpiTimer); }
+  componentWillUnmount(){ if (this._clinicUnsub) this._clinicUnsub(); window.removeEventListener("paste", this._paste); window.removeEventListener("resize", this._resize); window.removeEventListener("keydown", this._key); clearInterval(this._t); clearInterval(this._clockTimer); clearInterval(this._flapBoot); cancelAnimationFrame(this._raf); clearInterval(this._fallback); clearInterval(this._actTimer); clearInterval(this._kpiTimer); }
 
   ask(q){
     const a = pickAnswer(q);
@@ -1283,7 +1292,7 @@ export default class PulseLogic extends DCLogic {
       const title = prev.newTask.trim();
       if (!title) return {newTask:""};
       return {newTask:"", addedTasks: [{id:"n" + Date.now(), title, status:"Not started",
-        priority:prev.newPriority, who:"MK", due:"No due date", late:false,
+        priority:prev.newPriority, who:"DG", due:"No due date", late:false,
         client:"No client", day:"Any day", mins:"Mins", view:"All tasks"}].concat(prev.addedTasks)};
     });
   }
@@ -1300,7 +1309,7 @@ export default class PulseLogic extends DCLogic {
     this.setState(prev => {
       const extra = (prev.agentExtra[id] || []).concat([
         {kind:"user", text:q},
-        {kind:"agent", text:"on it. i'll come back when there's something to decide — nothing that changes a record goes through without your yes."}
+        {kind:"agent", text:"on it. i'll come back when there's something to decide, nothing that changes a record goes through without your yes."}
       ]);
       return {agentExtra: Object.assign({}, prev.agentExtra, {[id]: extra}), agentDraft:""};
     });
@@ -1316,7 +1325,7 @@ export default class PulseLogic extends DCLogic {
     this._lastFrame = t;
     // The canvas mounts and unmounts with the tab, and a ref on a plain element
     // is not wired by the template compiler, so resolve it from the DOM. Its
-    // presence — not component state — is what says the ontology is on screen.
+    // presence, not component state, is what says the ontology is on screen.
     if (!this.canvas || !this.canvas.isConnected){
       this.canvas = document.querySelector("canvas[data-onto-graph]");
     }
@@ -1333,6 +1342,11 @@ export default class PulseLogic extends DCLogic {
   }
 
   renderVals(){
+    syncKpis(KPI_DEFS);
+    return applyClinic(this, this.baseVals(), THEMES);
+  }
+
+  baseVals(){
     /* The graph is driven per instance from render, not from a closure created
        in componentDidMount: the runtime can render an instance that never ran
        mount, and a rAF scheduled from that realm never fires. A timer owned by
@@ -1358,7 +1372,7 @@ export default class PulseLogic extends DCLogic {
     const openKeys = ORDER.filter(k => !st.resolved[k]);
 
     // Equal grid columns (width:max-content + 1fr) let a single thumb glide by
-    // translateX(index * 100%) — no measurement, and identical motion everywhere.
+    // translateX(index * 100%), no measurement, and identical motion everywhere.
     const SLIDE = "transform .46s cubic-bezier(.22,.9,.16,1),background .3s var(--ease)";
     const segTrack = (extra) => "position:relative;display:inline-grid;grid-auto-flow:column;grid-auto-columns:1fr;;border-radius:999px"
       + "width:max-content;max-width:100%;align-items:center;padding:4px;background:var(--surface-faint);"
@@ -1400,9 +1414,9 @@ export default class PulseLogic extends DCLogic {
       + "transition:opacity .2s ease,transform .38s cubic-bezier(.16,1.5,.3,1),visibility .2s;"
       + (shown ? "visibility:visible" : "visibility:hidden;opacity:0;transform:translate(-12px,-50%) scale(.92)")
 
-    // Open rail shows labels inline; collapsed rail shows them as the hover pill — never both.
+    // Open rail shows labels inline; collapsed rail shows them as the hover pill, never both.
     const railOpen = st.railOpen;
-    // Collapsed: the label leaves the flex row entirely — otherwise its gap decentres the icon.
+    // Collapsed: the label leaves the flex row entirely, otherwise its gap decentres the icon.
     const inlineStyle = (hov, act) => railOpen
       ? "flex:1;min-width:0;font-size:13px;text-align:left;white-space:nowrap;overflow:hidden;opacity:1;"
         + "font-weight:" + (act ? "600" : "500") + ";"
@@ -1503,8 +1517,8 @@ export default class PulseLogic extends DCLogic {
     };
 
     const DAY_LOAD = {24:2, 25:3, 26:4, 27:5, 28:3, 29:0, 30:1, 31:2};
-    // A denser, Google-Calendar-style spread of events across the whole month —
-    // not just the last week — so the month grid actually has something in it.
+    // A denser, Google-Calendar-style spread of events across the whole month -
+    // not just the last week, so the month grid actually has something in it.
     const MONTH_EVENTS = [
       [2,"o1"], [3,"o6"], [5,"o2"], [6,"o4"], [9,"o3"], [10,"o5"], [12,"o1"], [13,"o6"],
       [16,"o2"], [17,"o4"], [19,"o3"], [20,"o5"], [23,"o1"], [24,"o2"], [24,"o5"],
@@ -1609,7 +1623,7 @@ export default class PulseLogic extends DCLogic {
       agendaTitle: st.opsDay === 26 ? "Today" : "Wed " + st.opsDay + " Aug",
       dragHint: true,
       agenda: (st.opsOrder || ["o5","o2","o3","o10","o4","o6","o9","o8"]).map(id => OPS_DEFS.find(w => w.id === id)).filter(Boolean).map(w => ({
-        time: (w.trigger.match(/\d{2}:\d{2}/) || ["—"])[0],
+        time: (w.trigger.match(/\d{2}:\d{2}/) || ["-"])[0],
         name:w.name, owner:w.owner,
         color: STATUS_TINT[opsStatusOf(w)][0],
         opacity: st.opsDrag === w.id ? "0.5" : "1",
@@ -1679,7 +1693,7 @@ export default class PulseLogic extends DCLogic {
       placeholder:BUILDER_COPY.placeholder, saveLabel:BUILDER_COPY.save,
       text: st.builderText, generated: st.builderGenerated,
       generateLabel: st.builderGenerated ? "Rebuild from the description" : "Build it",
-      footer: st.builderGenerated ? "Steps with effects always wait for your yes" : "Describe the outcome — Pulse works out the steps",
+      footer: st.builderGenerated ? "Steps with effects always wait for your yes" : "Describe the outcome, Pulse works out the steps",
       examples: BUILDER_COPY.examples.map(e => ({label:e, use: () => this.setState({builderText:e, builderGenerated:false})})),
       setText: (e) => this.setState({builderText:e.target.value}),
       generate: () => this.setState({builderGenerated:true}),
@@ -1691,7 +1705,7 @@ export default class PulseLogic extends DCLogic {
         ["CONDITION", "Skip deals already marked won or lost", "", "var(--border)", "var(--faint)"],
         ["ACTION", "Flag each one and write a management summary", "", "var(--border)", "var(--faint)"],
         ["AGENT", "Sales Agent", "It already has the deal context", "var(--border)", "var(--faint)"],
-        ["APPROVAL", "None — nothing leaves Pulse", "Add one if you want it emailed out", "var(--warn-soft)", AMBER],
+        ["APPROVAL", "None, nothing leaves Pulse", "Add one if you want it emailed out", "var(--warn-soft)", AMBER],
         ["ON FAILURE", "Retry twice, then tell Operations", "", "var(--border)", "var(--faint)"],
         ["NOTIFY", "Post to Home and the management group", "", "var(--border)", "var(--faint)"]
       ].map(b => ({label:b[0], value:b[1], note:b[2], border:b[3], labelColor:b[4], edit: () => {}}))
@@ -1741,13 +1755,14 @@ export default class PulseLogic extends DCLogic {
 
     const HERO = {
       contacts:{eyebrow:"CONTACTS · " + CONTACTS.length + " ON FILE", title:"Everyone you deal with",
-        blurb:"Staff and external in one place. Ask in your own words — it matches on name, role, organisation and tag.",
-        placeholder:"Try “buyers in Cork”, “installers”, “on stop”…", kind:"KEYWORD", scroll:"SCROLL FOR THE FULL LIST",
-        suggestions:["on stop","installer","Casey","supplier"]},
-      files:{eyebrow:"FILES · " + FILE_TREE.filter(r => r.type === "file").length + " DOCUMENTS",
-        title:"Everything on record", blurb:"Contracts, certificates and invoices. Indexed pages are the ones Helios can read from.",
-        placeholder:"Search inside every document…", kind:"FULL TEXT", scroll:"SCROLL FOR THE VIEWER",
-        suggestions:["credit","expiry","framework","invoice"]},
+        blurb:"Staff and external in one place. Ask in your own words, it matches on name, role, organisation and tag.",
+        placeholder:"Try “supplier”, “owner”, “planned”…", kind:"KEYWORD", scroll:"SCROLL FOR THE FULL LIST",
+        suggestions:["owner","planned","supplier","external"]},
+      files:{eyebrow:"DOCUMENTS · " + FILE_TREE.filter(r => r.type === "file").length + " FICTIONAL PLACEHOLDERS",
+        title:"Documents", blurb:"Intake forms, consent-document references, receipts and SOPs. Placeholders only: no patient content is shown.",
+        placeholder:"Search document titles…", kind:"TITLES", scroll:"SCROLL FOR THE VIEWER",
+        suggestions:["intake","consent","receipt","SOP"]},
+      registry:{eyebrow:"REGISTRY", title:"Registry", blurb:recSec.blurb, placeholder:"", kind:"", scroll:"", suggestions:[]},
       ontology:{eyebrow:"ONTOLOGY", title:"Ontology", blurb:recSec.blurb,
         placeholder:"", kind:"", scroll:"", suggestions:[]}
     }[recSec.id];
@@ -1771,7 +1786,7 @@ export default class PulseLogic extends DCLogic {
       askAnswer: recSec.id === "files"
         ? (fileHits ? fileHits + " of " + FILE_TREE.filter(r => r.type === "file").length + " documents contain that" : "No document contains that")
         : (matchedContacts.length
-          ? matchedContacts.length + " of " + CONTACTS.length + " match — on name, role, organisation and tag"
+          ? matchedContacts.length + " of " + CONTACTS.length + " match, on name, role, organisation and tag"
           : "Nothing matched. It searches name, role, organisation and tag only."),
       askTerms,
       askSuggestions: HERO.suggestions.map(s => ({label:s,
@@ -1893,7 +1908,7 @@ export default class PulseLogic extends DCLogic {
       addAccount: () => {
         const f = st.peopleForm || {};
         if (!f.name || !f.email) return;
-        const entry = [f.name, "Invited", f.email, "—", "active", f.role || "Standard", "Just invited"];
+        const entry = [f.name, "Invited", f.email, "-", "active", f.role || "Standard", "Just invited"];
         this.setState(p => ({peopleExtra: (p.peopleExtra || []).concat([entry]), peopleAddOpen:false, peopleForm:{name:"",email:"",role:"Standard"}}));
       },
       rows: roster.map((p, i) => {
@@ -1927,7 +1942,7 @@ export default class PulseLogic extends DCLogic {
       })
     };
 
-    /* Each connection reads as a pairing — Pulse on the left, the system on the
+    /* Each connection reads as a pairing, Pulse on the left, the system on the
        right, joined by a live link whose colour carries the status. */
     const integrationsModel = {
       cards: INTEGRATIONS.map((it, idx) => {
@@ -1998,7 +2013,7 @@ export default class PulseLogic extends DCLogic {
     };
 
     const adminModel = {
-      company: "Kilbride Group",
+      company: "Deborah Gough",
       urgent: [
         ["3", "employees awaiting access", AMBER, "var(--warn-soft)", "people"],
         ["1", "integration disconnected", RED, "var(--bad-soft)", "integrations"],
@@ -2141,7 +2156,7 @@ export default class PulseLogic extends DCLogic {
       .filter(e => { const k = e.title + "|" + e.actor + "|" + e.rel; if (seenTri[k]) return false; seenTri[k] = 1; return true; })
       .sort((a, b) => a.at - b.at);
     const WHY = {
-      failed: ["Nothing was lost — the work is queued and posts on reconnect.", "Retry", "Open the connection"],
+      failed: ["Nothing was lost, the work is queued and posts on reconnect.", "Retry", "Open the connection"],
       awaiting: ["Drafted and parked. It only moves when you say yes.", "Review and decide", "Open the record"]
     };
     const triageGroups = [
@@ -2166,7 +2181,7 @@ export default class PulseLogic extends DCLogic {
           open: () => this.setState({actOpen:e.id})
         }))};
     });
-    /* The People lens answers who is doing what right now — a roster of the
+    /* The People lens answers who is doing what right now, a roster of the
        staff with access, what each last touched, and what is parked on them. */
     const peopleLens = st.actKpi === "people";
     const peopleEvents = (feeds.people || []);
@@ -2207,7 +2222,7 @@ export default class PulseLogic extends DCLogic {
           ? "Everything that stopped working or is parked waiting on a decision, oldest first. Nothing here has been lost."
           : peopleLens
             ? "42 of 48 staff have used Pulse today. Every edit, approval and decision below is written against the person who made it."
-            : "Data arriving, people acting and agents working — then the audit trail underneath.",
+            : "Data arriving, people acting and agents working, then the audit trail underneath.",
       peopleKpis: [
         ["Active today", "42 of 48", "signed in and working", LIME],
         ["Decisions made", "27", "approvals and sign-offs", GREEN],
@@ -2223,7 +2238,7 @@ export default class PulseLogic extends DCLogic {
       attentionKpis: [
         ["Failed", String(attentionItems.filter(e => e.status === "failed").length), "queued, nothing lost", RED],
         ["Awaiting your yes", String(attentionItems.filter(e => e.status === "awaiting").length), "drafted, never sent", AMBER],
-        ["Oldest wait", attentionItems.length ? shortAgo(attentionItems[0].at) : "—", "since it was raised", "#6ad0f0"],
+        ["Oldest wait", attentionItems.length ? shortAgo(attentionItems[0].at) : "-", "since it was raised", "#6ad0f0"],
         ["Retried automatically", "12", "cleared without you", LIME]
       ].map((k, ki) => ({label:k[0], value:k[1], hint:k[2], dot:k[3],
         valueColor: k[3] === RED || k[3] === AMBER ? k[3] : INK,
@@ -2333,7 +2348,7 @@ export default class PulseLogic extends DCLogic {
           hasDiff: openEvent.stream === "people" || openEvent.stream === "data",
           diff: [{field:"Status", before:"active", after:"on stop"},
             {field:"Credit limit", before:"€20,000", after:"€20,000"},
-            {field:"Billing email", before:"—", after:"accounts@dunneandsons.ie"}],
+            {field:"Billing email", before:"-", after:"accounts@supplier.example"}],
           related: [openEvent.rel, openEvent.actor, openEvent.src],
           audit: "Written to the event log · immutable · " + openEvent.id.toUpperCase(),
           canUndo: openEvent.stream === "people" && openEvent.status === "completed"};
@@ -2343,8 +2358,8 @@ export default class PulseLogic extends DCLogic {
     const g = this.graph, live = this.searches || [];
     const PHASE_WORD = {sweep:"expanding", path:"tracing", hold:"matched", fade:"clearing"};
     const graphModel = {
-      nodeCount: g ? g.nodes.length.toLocaleString("en-IE") : "—",
-      edgeCount: g ? g.edges.length.toLocaleString("en-IE") : "—",
+      nodeCount: g ? g.nodes.length.toLocaleString("en-IE") : "-",
+      edgeCount: g ? g.edges.length.toLocaleString("en-IE") : "-",
       running: live.filter(s => s.delay <= 0).length + " OF " + live.length,
       queries: live.map((s, i) => {
         const settled = Math.min(s.order.length, Math.floor(s.reveal));
@@ -2363,7 +2378,7 @@ export default class PulseLogic extends DCLogic {
         count: g ? String((this._legendCounts || (this._legendCounts = (() => {
           const c = new Array(CLUSTERS.length).fill(0);
           for (const nd of g.nodes) if (nd.kind !== "core" && nd.cluster >= 0) c[nd.cluster]++;
-          return c; })()))[i]) : "—"}))
+          return c; })()))[i]) : "-"}))
     };
 
     const oq = st.ontoQuery || "", ontoSearchRes = st.ontoResult;
@@ -2379,7 +2394,7 @@ export default class PulseLogic extends DCLogic {
       fromLabel: ontoSearchRes ? ontoSearchRes.from : "", toLabel: ontoSearchRes ? ontoSearchRes.to : "",
       hopsLabel: ontoSearchRes && ontoSearchRes.hops != null ? ontoSearchRes.hops + " hop" + (ontoSearchRes.hops === 1 ? "" : "s") + " between records" : "",
       connectedLabel: ontoSearchRes && ontoSearchRes.connected
-        ? (ontoSearchRes.connected.length ? "Also connected to " + ontoSearchRes.connected.join(", ") : "No other clusters reached this time — try again")
+        ? (ontoSearchRes.connected.length ? "Also connected to " + ontoSearchRes.connected.join(", ") : "No other clusters reached this time, try again")
         : ""
     };
 
@@ -2478,7 +2493,7 @@ export default class PulseLogic extends DCLogic {
     const segStyle = (active) => "display:flex;align-items:center;gap:7px;height:30px;padding:0 14px;border:0;border-radius:var(--r-ctl,11px);cursor:pointer;font-size:12.5px;white-space:nowrap;"
       + "transition:background .24s var(--ease),color .24s var(--ease),font-weight .24s var(--ease);"
       + (active ? "background:var(--pill-bg);color:var(--pill-ink);font-weight:500;box-shadow:0 2px 5px rgba(0,0,0,.34),0 6px 16px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.5);" : "background:none;color:var(--dim)");
-    // active/inactive are booleans the template branches on — a changed style string
+    // active/inactive are booleans the template branches on, a changed style string
     // on a keyless reused node does not reliably commit.
     const seg = (label, active, go, count) => ({label, go, count: count || "",
       active: !!active, inactive: !active});
@@ -2501,16 +2516,7 @@ export default class PulseLogic extends DCLogic {
     const pillStyle = (active) => "height:30px;padding:0 15px;border:0;border-radius:var(--r-ctl,9px);cursor:pointer;font-size:12.5px;white-space:nowrap;transition:background .24s var(--ease),color .24s var(--ease);"
       + (active ? "background:var(--pill-bg);color:var(--pill-ink);font-weight:500;box-shadow:0 2px 5px rgba(0,0,0,.34),0 6px 16px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.5);" : "background:none;color:var(--dim)");
 
-    const TASKS = [
-      {id:"t1", title:"Chase INV-10428 — Dunne & Sons", due:"09:30", who:"AN", queue:["mine","overdue"], subject:"Dunne & Sons Ltd", priority:"high", late:true},
-      {id:"t2", title:"Reassign Van 04 jobs off Ballincollig", due:"11:00", who:"MK", queue:["mine","overdue"], subject:"Ballincollig depot", priority:"high", late:true},
-      {id:"t3", title:"Approve purchase order PO-4471", due:"12:00", who:"MK", queue:["mine"], subject:"PO-4471", priority:"normal"},
-      {id:"t4", title:"Call Casey Builders about Thursday", due:"14:00", who:"TW", queue:["mine","team"], subject:"Casey Builders", priority:"normal"},
-      {id:"t5", title:"Sign off August counter stocktake", due:"16:30", who:"SB", queue:["team"], subject:"Head office", priority:"low"},
-      {id:"t6", title:"Assign installer to Thursday depot visit", due:"Tomorrow", who:"—", queue:["unassigned","upcoming"], subject:"site-visits.visit", priority:"high"},
-      {id:"t7", title:"VAT return — August", due:"Fri", who:"AN", queue:["team","upcoming"], subject:"Head office", priority:"normal"},
-      {id:"t8", title:"Ballincollig lease decision", due:"Thu", who:"MK", queue:["mine","upcoming"], subject:"Ballincollig depot", priority:"high"}
-    ];
+    const TASKS = [];
     const decorateTask = (t) => {
       const done = !!st.done[t.id];
       return Object.assign({}, t, {
@@ -2542,79 +2548,9 @@ export default class PulseLogic extends DCLogic {
     }));
     const queueTasks = (st.queue === "all" ? TASKS : TASKS.filter(t => t.queue.includes(st.queue))).map(decorateTask);
 
-    const APPROVALS = [
-      {id:"a1", title:"Purchase order PO-4471 — €14,280", subject:"Munster Plumbing Supplies · raised by Aoife Nolan", age:"18m", status:"awaiting you",
-       steps:[{who:"Aoife Nolan",state:"raised 08:54",dot:GREEN},{who:"Martin Kilbride",state:"pending",dot:AMBER}],
-       work:{kind:"table", label:"PURCHASE ORDER", viewLabel:"View order",
-         headline:"PO-4471 · Munster Plumbing Supplies", sub:"Delivery Thursday 18 Sep · terms 30 days",
-         cols:["Line","Qty","Unit","Total"], align:["left","right","right","right"],
-         rows:[["22mm copper tube — 3m","240","€38.40","€9,216.00"],
-               ["Compression elbow 22mm","400","€4.10","€1,640.00"],
-               ["Solder ring coupler 22mm","600","€2.85","€1,710.00"],
-               ["Flux paste 350g","60","€28.57","€1,714.00"]],
-         totals:[["Net","€14,280.00"],["VAT 23% (reverse charge)","€0.00"],["Payable","€14,280.00"]],
-         thinking:[["Checked stock levels","All four lines are below reorder point"],
-                   ["Matched pricing","Unit prices equal the June supplier agreement"],
-                   ["Checked commitments","Three lines are committed to Thursday's jobs"],
-                   ["Checked threshold","€4,280 over Martin's sign-off limit, so it routed here"]],
-         tools:[["records.read","read"],["invoices.read","read"],["approvals.route","write"]],
-         risk:"No alternative supplier quote on file. Last price change was 14 June."}},
-      {id:"a2", title:"Credit limit increase — Casey Builders", subject:"€10,000 → €18,000 · raised by Niamh Cronin", age:"Yesterday", status:"awaiting you",
-       steps:[{who:"Niamh Cronin",state:"raised 16:02",dot:GREEN},{who:"Aoife Nolan",state:"approved 16:40",dot:GREEN},{who:"Martin Kilbride",state:"pending",dot:AMBER}],
-       work:{kind:"diff", label:"RECORD CHANGE", viewLabel:"View change",
-         headline:"Casey Builders Ltd · account CB-0142", sub:"Three fields change on approval, one unchanged",
-         diff:[["Credit limit","€10,000","€18,000"],["Terms","30 days","45 days"],["Risk band","B","B"],["Reviewed","14 Mar 2026","Today"]],
-         thinking:[["Read payment history","24 invoices, 22 paid on time, average 27 days"],
-                   ["Checked exposure","Current balance €7,400 — 74% of the existing limit"],
-                   ["Checked open work","€21k of quoted work would be blocked by the current limit"],
-                   ["Checked policy","Increases above €15,000 need your decision"]],
-         tools:[["records.read","read"],["invoices.read","read"],["records.update","write"]],
-         risk:"One late payment in February, 19 days over. Cleared in full."}},
-      {id:"a4", title:"Proposal — Ballincollig retrofit €62,400", subject:"Drafted by Helios · raised by Niamh Cronin", age:"3h", status:"awaiting you",
-       steps:[{who:"Niamh Cronin",state:"raised 06:10",dot:GREEN},{who:"Martin Kilbride",state:"pending",dot:AMBER}],
-       work:{kind:"doc", label:"PROPOSAL · 4 PAGES", viewLabel:"Read proposal",
-         headline:"Heating retrofit — Ballincollig depot", sub:"Prepared for Casey Builders Ltd · valid 30 days",
-         doc:[["Scope","Replace the depot's two oil boilers with a cascaded air-source system, re-balance the existing circuit and fit weather compensation controls. Work is phased over two weekends so the yard keeps running."],
-              ["Approach","Week one strips the plant room and lands the new units on the existing plinth. Week two commissions the cascade and hands over with a 12-month monitoring window."],
-              ["Commercials","€62,400 fixed price, 30% on order, 40% on plant delivery, 30% on handover. Excludes making good to the render."],
-              ["Why us","We hold the maintenance contract on the Glanmire site and carry the same plant in stock, so lead time is three weeks rather than nine."]],
-         totals:[["Plant","€38,900.00"],["Labour","€18,100.00"],["Controls and commissioning","€5,400.00"],["Total","€62,400.00"]],
-         thinking:[["Pulled the site record","Two oil boilers, 2009, last serviced March"],
-                   ["Priced from live stock","Plant is in stock at the Cork branch"],
-                   ["Reused past wording","Lifted scope language from the Glanmire proposal you approved"],
-                   ["Left a gap","No allowance for asbestos survey — flagged below"]],
-         tools:[["records.read","read"],["files.read","read"],["email.send","external"]],
-         risk:"No asbestos survey allowance. If the plant room needs one, add roughly €1,200."}},
-      {id:"a5", title:"Payment run — 14 suppliers €48,920", subject:"Scheduled by Cash Watch · Friday 19 Sep", age:"1h", status:"awaiting you",
-       steps:[{who:"Cash Watch",state:"proposed 09:40",dot:GREEN},{who:"Martin Kilbride",state:"pending",dot:AMBER}],
-       work:{kind:"table", label:"PAYMENT RUN", viewLabel:"View run",
-         headline:"Run PR-0238 · 14 payments", sub:"Leaves the AIB current account on Friday 19 Sep",
-         cols:["Supplier","Due","Invoices","Amount"], align:["left","left","right","right"],
-         rows:[["Munster Plumbing Supplies","19 Sep","3","€18,240.00"],
-               ["Tyrrell Insulation","19 Sep","1","€9,110.00"],
-               ["Kelleher Haulage","20 Sep","4","€7,480.00"],
-               ["Cork Electrical Wholesale","19 Sep","2","€6,300.00"],
-               ["10 others","19–24 Sep","11","€7,790.00"]],
-         totals:[["Run total","€48,920.00"],["Account balance after","€61,380.00"],["Held back","€2,410.00"]],
-         thinking:[["Read the ledger","31 invoices due inside seven days"],
-                   ["Held two back","Tyrrell credit note unresolved, Dineen job in dispute"],
-                   ["Checked the balance","Run leaves €61,380, above your €50k floor"],
-                   ["Checked mandates","All 14 have current SEPA mandates on file"]],
-         tools:[["invoices.read","read"],["payments.read","read"],["bank.payment.create","external"]],
-         risk:"Two invoices held back total €2,410. They will age past 60 days if not paid next run."}},
-      {id:"a3", title:"Write-off — INV-10233 €412", subject:"Glanmire Mechanical · raised by Aoife Nolan", age:"2 days", status:"approved",
-       steps:[{who:"Aoife Nolan",state:"raised",dot:GREEN},{who:"Martin Kilbride",state:"approved",dot:GREEN}],
-       work:{kind:"diff", label:"WRITE-OFF", viewLabel:"View write-off",
-         headline:"INV-10233 · Glanmire Mechanical", sub:"Two fields change on approval",
-         diff:[["Status","Past due 94 days","Written off"],["Balance","€412.00","€0.00"]],
-         thinking:[["Checked the age","94 days past due, three chases sent"],
-                   ["Checked the account","Company dissolved 12 August"],
-                   ["Checked the amount","Below your €500 write-off threshold"]],
-         tools:[["invoices.read","read"],["invoices.update","write"]],
-         risk:"None. The counterparty no longer exists."}}
-    ];
+    const APPROVALS = [];
     const bucketOf = (a) => a.status === "approved" ? "Decided"
-      : a.steps.some(s => s.state === "pending" && s.who === "Martin Kilbride") ? "Awaiting you" : "Awaiting others";
+      : a.steps.some(s => s.state === "pending" && s.who === "Deborah Gough") ? "Awaiting you" : "Awaiting others";
     const APPROVAL_COUNTS = {"Awaiting you":0, "Awaiting others":0, "Decided":0};
     APPROVALS.filter(a => !st.approved[a.id]).forEach(a => { APPROVAL_COUNTS[bucketOf(a)] += 1; });
     const approvalView = st.workViews.approvals || "Awaiting you";
@@ -2643,8 +2579,8 @@ export default class PulseLogic extends DCLogic {
     }));
 
     /* An approval is a decision about a piece of work, so the work itself has
-       to be readable before the yes. The payload shape differs per request —
-       a document, a table, a field-level change — and the viewer renders
+       to be readable before the yes. The payload shape differs per request -
+       a document, a table, a field-level change, and the viewer renders
        whichever one the approval carries, alongside the reasoning and the
        tools that will fire. */
     const wDoc = APPROVALS.find(a => a.id === st.workDoc);
@@ -2661,8 +2597,8 @@ export default class PulseLogic extends DCLogic {
       let kindIcon = "M6 3.5h9l3.5 3.5v13.5H6Z M15 3.5V7h3.5";
       if (w.kind === "table"){
         facts = [["Lines", String((w.rows || []).length)],
-                 ["Value", lastTotal ? lastTotal[1] : "—"],
-                 ["Terms", (w.sub || "").split(" · ").slice(-1)[0] || "—"]];
+                 ["Value", lastTotal ? lastTotal[1] : "-"],
+                 ["Terms", (w.sub || "").split(" · ").slice(-1)[0] || "-"]];
         kindIcon = "M4 6.5h16 M4 12h16 M4 17.5h16 M9 4v16";
       } else if (w.kind === "diff"){
         facts = [["Fields changing", String(changed.length)]]
@@ -2670,7 +2606,7 @@ export default class PulseLogic extends DCLogic {
         kindIcon = "M4 8h9l-2.5-2.5 M20 16h-9l2.5 2.5";
       } else if (w.kind === "doc"){
         facts = [["Sections", String((w.doc || []).length)],
-                 ["Value", lastTotal ? lastTotal[1] : (wDoc.title.match(/€[\d,\.]+/) || ["—"])[0]],
+                 ["Value", lastTotal ? lastTotal[1] : (wDoc.title.match(/€[\d,\.]+/) || ["-"])[0]],
                  ["Prepared by", (wDoc.subject || "").indexOf("Helios") > -1 ? "Agent draft" : "Team"]];
         kindIcon = "M6 3.5h9l3.5 3.5v13.5H6Z M15 3.5V7h3.5 M9 12h6 M9 16h4";
       }
@@ -2778,14 +2714,14 @@ export default class PulseLogic extends DCLogic {
        ],
        breakdown:[
         {key:"Head office", value:money(214600), pct:"72%", color:LIME},
-        {key:"Ballincollig depot", value:money(156800), pct:"53%", color:"var(--track)"},
-        {key:"Mallow yard", value:money(41400), pct:"18%", color:"var(--track)"}
+        {key:"Skin", value:money(9600), pct:"57%", color:"var(--track)"},
+        {key:"Hair and scalp", value:money(4800), pct:"29%", color:"var(--track)"}
        ]},
       {title:"site-visits", description:"Contributed by an installed module.", hasBreakdown:false,
        metrics:[
         {label:"Visits completed", value:String(Math.round(38*scale)), change:"+11%", changeColor:delta("up"), hint:"vs previous "+rangeLabel,
          cardBg:"var(--surface)", cardBorder:"var(--track)", ink:INK, bars:bars([.4,.5,.6,.5,.66,.6,.72,.66,.8,.9], LIME)},
-        {label:"Unassigned", value:"1", change:"—", changeColor:delta("flat"), hint:"Thursday 09:00",
+        {label:"Unassigned", value:"1", change:"-", changeColor:delta("flat"), hint:"Thursday 09:00",
          cardBg:"var(--surface)", cardBorder:"var(--warn-soft)", ink:INK, bars:bars([.2,.3,.2,.4,.3,.25,.2,.3,.25,.4], AMBER)},
         {label:"Average duration", value:"1h 48m", change:"−6m", changeColor:delta("up"), hint:"across completed visits",
          cardBg:"var(--surface)", cardBorder:"var(--track)", ink:INK, bars:bars([.6,.55,.6,.5,.55,.48,.5,.46,.44,.4], LIME)},
@@ -2796,24 +2732,7 @@ export default class PulseLogic extends DCLogic {
 
     const runBar = (state) => ({ok:"var(--accent)", partial:"var(--warn)", failed:"var(--bad)", idle:"var(--track)"})[state];
     const runs = (pattern) => pattern.map(p => ({bg:runBar(p), label:p}));
-    const automations = [
-      {name:"Overdue invoice reminder", state:"live", stateBg:"var(--ok-soft)", stateColor:GREEN,
-       trigger:"schedule · daily 08:00", actions:[{label:"notify.email", border:"var(--bad-soft)", color:AMBER},{label:"tasks.create", border:"var(--track)", color:BODY}],
-       lastRun:"Today 08:00", result:"6 of 10 sent · partial", resultColor:AMBER, hasRuns:true, runSummary:"11 ok · 3 partial",
-       runs:runs(["ok","ok","partial","ok","ok","ok","partial","ok","ok","ok","ok","ok","partial","partial"])},
-      {name:"Approval routing over €10k", state:"live", stateBg:"var(--ok-soft)", stateColor:GREEN,
-       trigger:"event · core.approval.created", actions:[{label:"approvals.route", border:"var(--track)", color:BODY},{label:"notify.inbox", border:"var(--track)", color:BODY}],
-       lastRun:"Today 08:54", result:"ok", resultColor:GREEN, hasRuns:true, runSummary:"14 ok",
-       runs:runs(["ok","ok","ok","ok","ok","ok","ok","ok","ok","ok","ok","ok","ok","ok"])},
-      {name:"Unassigned visit escalation", state:"live", stateBg:"var(--ok-soft)", stateColor:GREEN,
-       trigger:"event · site-visits.visit.created", actions:[{label:"notify.inbox", border:"var(--track)", color:BODY}],
-       lastRun:"Today 07:00", result:"ok", resultColor:GREEN, hasRuns:true, runSummary:"9 ok · 1 failed",
-       runs:runs(["idle","idle","ok","ok","failed","ok","ok","ok","idle","ok","ok","ok","ok","ok"])},
-      {name:"Xero invoice sync", state:"failing", stateBg:"var(--bad-soft)", stateColor:RED,
-       trigger:"schedule · hourly", actions:[{label:"xero.post", border:"var(--bad-soft)", color:RED}],
-       lastRun:"Today 02:14", result:"invalid_grant · dead-lettered", resultColor:RED, hasRuns:true, runSummary:"4 failed",
-       runs:runs(["ok","ok","ok","ok","ok","ok","ok","ok","ok","ok","failed","failed","failed","failed"])}
-    ];
+    const automations = [];
 
     const health = [
       {label:"Events waiting", value:"12", hint:"oldest 4 minutes ago", color:INK, border:"var(--track)"},
@@ -2821,23 +2740,13 @@ export default class PulseLogic extends DCLogic {
       {label:"Dead letters", value:"2", hint:"gave up after retrying", color:RED, border:"var(--bad-soft)"},
       {label:"Failed deliveries", value:"5", hint:"across 2 subscribers", color:AMBER, border:"var(--warn-soft)"}
     ];
-    const failures = [
-      {name:"Xero invoice sync", status:"failed", error:"invalid_grant: refresh token expired", at:"02:14", tagBg:"var(--bad-soft)", tagColor:RED},
-      {name:"Overdue invoice reminder", status:"partial", error:"notify.email: 4 records missing billing_email", at:"08:00", tagBg:"var(--warn-soft)", tagColor:AMBER},
-      {name:"Unassigned visit escalation", status:"failed", error:"notify.inbox: actor has no grant for core:notification:create", at:"Mon", tagBg:"var(--bad-soft)", tagColor:RED}
-    ];
-    const calls = [
-      {tool:"xero.invoices.post", status:"failed", ms:"1,204 ms", at:"02:14", tagBg:"var(--bad-soft)", tagColor:RED},
-      {tool:"whatsapp.messages.send", status:"ok", ms:"412 ms", at:"07:02", tagBg:"var(--ok-soft)", tagColor:GREEN},
-      {tool:"resend.email.send", status:"ok", ms:"286 ms", at:"08:00", tagBg:"var(--ok-soft)", tagColor:GREEN},
-      {tool:"resend.email.send", status:"failed", ms:"94 ms", at:"08:00", tagBg:"var(--bad-soft)", tagColor:RED},
-      {tool:"anthropic.messages", status:"ok", ms:"2,940 ms", at:"09:11", tagBg:"var(--ok-soft)", tagColor:GREEN}
-    ];
+    const failures = [];
+    const calls = [];
 
     const modules = [
       {label:"Pulse Core", id:"core", version:"0.1.0", state:"always installed", bg:"var(--surface)", border:"var(--track)",
        stateBg:"var(--track)", stateColor:BODY,
-       description:"People, organisations, locations, teams and the relationships between them — registered through the same contract a module uses.",
+       description:"People, organisations, locations, teams and the relationships between them, registered through the same contract a module uses.",
        contributions:[{n:"31",k:"routes"},{n:"10",k:"nav items"},{n:"21",k:"events"},{n:"7",k:"predicates"},{n:"64",k:"permissions"}]},
       {label:"Site visits", id:"site-visits", version:"1.0.0", state:"installed", bg:"var(--accent-faint)", border:"var(--accent-line)",
        stateBg:"var(--accent-soft)", stateColor:LIME,
@@ -2847,20 +2756,13 @@ export default class PulseLogic extends DCLogic {
        stateBg:"var(--accent-soft)", stateColor:LIME,
        description:"Component sheet, directory and record fixtures used to review the primitives before they reach a client build.",
        contributions:[{n:"3",k:"pages"},{n:"1",k:"widget"},{n:"0",k:"tables"}]},
-      {label:"Wholesale", id:"wholesale", version:"—", state:"available", bg:"var(--surface-faint)", border:"var(--track)",
+      {label:"Wholesale", id:"wholesale", version:"-", state:"available", bg:"var(--surface-faint)", border:"var(--track)",
        stateBg:"var(--track)", stateColor:FAINT,
        description:"Orders, price lists, stock and purchase orders. One line in this client's config would add its pages, permissions, events and Helios tools.",
        contributions:[{n:"6",k:"entities"},{n:"9",k:"helios tools"},{n:"12",k:"events"}]}
     ];
 
-    const notificationFeed = [
-      {dot:LIME, text:"Aoife Nolan assigned you “Approve purchase order PO-4471”", event:"core.approval.created", channel:"Inbox", meta:"18m"},
-      {dot:RED, text:"Xero invoice sync failed — refresh token expired", event:"core.automation.failed", channel:"Inbox · WhatsApp", meta:"6h"},
-      {dot:AMBER, text:"Helios flagged a change in Dunne & Sons payment behaviour", event:"core.notification.created", channel:"Inbox", meta:"2h"},
-      {dot:AMBER, text:"Thursday's depot visit is still unassigned", event:"site-visits.visit.created", channel:"Inbox", meta:"2h"},
-      {dot:NEUTRAL, text:"Séamus Byrne mentioned you on “Reassign Van 04 jobs”", event:"core.comment.created", channel:"Inbox", meta:"Yesterday"},
-      {dot:NEUTRAL, text:"Your daily briefing is ready", event:"core.briefing.sent", channel:"WhatsApp", meta:"07:00"}
-    ];
+    const notificationFeed = [];
 
     const FEATURES = [["approvals","Approvals"],["automations","Automations"],["insights","Insights"],["customEntities","Custom entities"],["whatsapp","WhatsApp channel"],["composio","Composio actions"]];
     const features = FEATURES.map(f => {
@@ -2885,32 +2787,10 @@ export default class PulseLogic extends DCLogic {
     };
     const recents = st.palRecent || [];
     const themeAction = st.theme === "dark" ? "Switch to light appearance" : "Switch to dark appearance";
-    const SEARCH = [
-      recents.length ? {group:"Recent", scope:"All", items:recents.slice(0, 3).map(r => ({title:r, meta:"Recent search", hint:"AGAIN", glyph:"recent",
-        go: () => this.setState({query:r, palSel:0})}))} : null,
-      {group:"Actions", scope:"Actions", items:[
-        {title:"Start a new Helios conversation", meta:"Clears the current thread", hint:"ACTION", glyph:"action",
-          go: () => { clearInterval(this._t); this.setState({page:"Home", thread:[], typed:0, draft:""}); }},
-        {title:"Review approvals waiting on you", meta:"Work · approvals", hint:"ACTION", glyph:"action",
-          go: () => this.setState({page:"Work", queue:"mine"})},
-        {title:themeAction, meta:"Appearance", hint:"ACTION", glyph:"action",
-          go: () => this.setState(p => p.theme === "light" ? {theme: p.darkTheme || this.props.theme || "harbour"} : {theme:"light", darkTheme:p.theme})},
-        {title:"Open system health", meta:"Admin · modules and jobs", hint:"ACTION", glyph:"action",
-          go: () => this.setState({page:"Settings"})}
-      ]},
-      {group:"Agents", scope:"Agents", items:st.agents.slice(0, 4).map(a => ({title:a.name, meta:a.role, hint:a.group ? "GROUP" : "AGENT", glyph:"agent",
-        go: () => this.setState({page:"Agents", agentId:a.id})}))},
-      {group:"Work", scope:"Work", items:TASKS.slice(0, 4).map(t => ({title:t.title, meta:t.subject + " · due " + t.due, hint:"TASK", glyph:"task",
-        go: () => this.setState({page:"Work", queue:"mine"})}))},
-      {group:"Records", scope:"Records", items:PEOPLE.slice(0, 3).map(p => ({title:p[0], meta:p[1] + " · " + p[3], hint:"PERSON", glyph:"person",
-        go: () => this.setState({page:"Records", record:"person"})}))
-        .concat(ORGS.slice(0, 3).map(o => ({title:o[0], meta:o[1] + " · " + o[2] + " outstanding", hint:"ORG", glyph:"org",
-        go: () => this.setState({page:"Records", record:"org"})})))},
-      {group:"Pages", scope:"Pages", items:ASPECT_DEFS.slice(0, 3).map(a => ({title:a.label, meta:a.description, hint:"AREA", glyph:"page",
-        go: () => this.goPage("Dashboard", {aspect:a.id})}))
-        .concat([{title:"Roles and grants", meta:"Who can see and do what", hint:"CONFIG", glyph:"page",
-        go: () => this.setState({page:"Settings"})}])}
-    ].filter(Boolean);
+    const paletteToggleTheme = () => this.setState(p => isLightTheme(THEMES, p.theme)
+      ? {theme: p.darkTheme || "harbour", lightTheme: p.theme, paletteOpen:false}
+      : {theme: p.lightTheme || "milltown", darkTheme: p.theme, paletteOpen:false});
+    const SEARCH = paletteSearch(this, ql, recents, isLightTheme(THEMES, st.theme) ? "Switch to dark appearance" : "Switch to light appearance", paletteToggleTheme);
 
     const match = g => g.items.filter(i => !ql || (i.title + " " + i.meta).toLowerCase().includes(ql));
     const scopeCounts = {All:0};
@@ -2997,7 +2877,7 @@ export default class PulseLogic extends DCLogic {
       ],
       Agents: [
         {title:"Month-end close", meta:"Group of three agents", icon:ICONS.agents, go: jump("Agents", {agentId:"monthend"})},
-        {title:"Credit Control", meta:"Watches payment behaviour", icon:ICONS.agents, go: jump("Agents", {agentId:"credit"})},
+        {title:"Finance Agent", meta:"Suggests payment matches", icon:ICONS.agents, go: jump("Agents", {agentId:"finance"})},
         {title:"Build an agent", meta:"Start from a blank brief", icon:ICONS.modules, go: () => this.setState({paletteOpen:false, query:"", page:"Agents", builderOpen:true, builderMode:"new"})},
         {title:"Tools and grants", meta:"What agents may do", icon:ICONS.navAdmin, go: jump("Settings")}
       ],
@@ -3024,7 +2904,7 @@ export default class PulseLogic extends DCLogic {
       {title:"Action inbox", count:"31×", icon:ICONS.inbox, go: jump("Home")},
       {title:"Approvals", count:"24×", icon:ICONS.approvals, go: jump("Work", {workSection:"approvals"})},
       {title:"Overdue invoices", count:"18×", icon:ICONS.insights, go: jump("Dashboard", {aspect:"cash"})},
-      {title:"Dunne & Sons Ltd", count:"12×", icon:ICONS.orgs, go: jump("Records", {recSection:"contacts", record:"org"})},
+      {title:"Waitlist", count:"12×", icon:ICONS.orgs, go: () => { this.setState({paletteOpen:false}); clinicGo("Bookings", "waitlist"); }},
       {title:"Month-end close", count:"9×", icon:ICONS.agents, go: jump("Agents", {agentId:"monthend"})},
       {title:"Site visits", count:"7×", icon:ICONS.visits, go: jump("Work", {workSection:"schedules"})}
     ];
@@ -3089,7 +2969,12 @@ export default class PulseLogic extends DCLogic {
     const DIRS_ORDER = ["People","Organisations","Teams","Locations","Site visits"];
     const ADMIN_ORDER = ["Automations","System health","Installed modules"];
     let contextNav, contextHint, searchHint;
-    if (page === "Settings"){
+    const clinicNav = clinicContextNav(this, page);
+    if (clinicNav){
+      contextNav = clinicNav.tabs.map(t => seg(t.label, t.active, t.go, t.count));
+      contextHint = clinicNav.hint;
+      searchHint = clinicNav.search;
+    } else if (page === "Settings"){
       contextNav = ADMIN_GROUPS.map(grp => seg(
         grp[0].charAt(0) + grp[0].slice(1).toLowerCase(),
         st.adminGroup === grp[0],
@@ -3219,19 +3104,18 @@ export default class PulseLogic extends DCLogic {
       removeActivity: () => this.toggleIn("widgets", "activity"),
       removeKpi: () => this.toggleIn("widgets", "kpi"),
       removeVisits: () => this.toggleIn("widgets", "visits"),
-      miniKpis: ["revenue","overdue","jobs","margin"].map(k => {
+      miniKpis: ["today","week","receipts","drafts"].map(k => {
         const d = KPI_DEFS[k];
         return {label:d.label, value:d.value, delta:d.delta, deltaColor: d.dir === "up" ? GREEN : RED};
       }),
       visitWidget: [
-        {title:"Boiler service · Casey Builders", when:"Wed 09:00", dot:LIME},
-        {title:"Pre-install survey · Ó Riain", when:"Wed 14:00", dot:LIME},
-        {title:"Depot check · Ballincollig", when:"Thu 09:00", dot:AMBER}
+        {title:"Today", when:"", dot:LIME},
+                {title:"Tomorrow", when:"", dot:AMBER}
       ],
 
       /* dashboard */
       isDashboard: page === "Dashboard",
-      dashTitle: "Kilbride Group · " + areaLabel,
+      dashTitle: "Deborah Gough · " + areaLabel,
       kpiEdit: st.kpiEdit,
       toggleKpiEdit: () => this.setState(prev => ({kpiEdit: !prev.kpiEdit})),
       kpiEditLabel: st.kpiEdit ? "Done" : "Edit KPIs",
@@ -3274,7 +3158,7 @@ export default class PulseLogic extends DCLogic {
       }))),
       area: (() => {
         const a = ASPECT_DEFS.find(x => x.id === st.aspect) || synthesizeCustomArea(st.aspect);
-        if (!a) return {title: st.aspect, description:"Custom filter — no metrics registered against it yet.",
+        if (!a) return {title: st.aspect, description:"Custom filter, no metrics registered against it yet.",
           owner:"CUSTOM", color:"var(--accent)", metrics:[], chart:[], chartTitle:"No series", chartUnit:"",
           splitTitle:"No breakdown", split:[], tableCols:["Name","Value","Change","Note"], table:[]};
         const isCustom = !ASPECT_DEFS.find(x => x.id === st.aspect);
@@ -3306,7 +3190,7 @@ export default class PulseLogic extends DCLogic {
           /* Structure follows the shape of the data. A trend aspect leads with
              one hero metric and a tall chart; a ranking or funnel aspect is
              short, so its metrics stay equal and the two cards share the row
-             evenly — that is what keeps the second row from leaving a hole. */
+             evenly, that is what keeps the second row from leaving a hole. */
           metricGrid: (a.kind === "columns" || a.kind === "area")
             ? "display:grid;grid-template-columns:1.7fr 1fr 1fr 1fr;gap:12px;align-items:stretch"
             : a.kind === "dots"
@@ -3317,7 +3201,7 @@ export default class PulseLogic extends DCLogic {
             : a.kind === "stacked"
               ? "display:grid;grid-template-columns:1.35fr 1fr;gap:12px;margin-top:12px;align-items:stretch"
               : "display:grid;grid-template-columns:1.6fr 1fr;gap:12px;margin-top:12px;align-items:stretch",
-          /* The footer totals the rows it sits under — parsed from the row
+          /* The footer totals the rows it sits under, parsed from the row
              values themselves, so it can never drift into quoting an
              unrelated metric. Euro rows total in euro, counts in counts. */
           splitUnit: (() => {
@@ -3326,7 +3210,7 @@ export default class PulseLogic extends DCLogic {
           })(),
           splitFootLabel: "TOTAL",
           splitFootValue: (() => {
-            if (!a.split.length) return "—";
+            if (!a.split.length) return "-";
             const raw = a.split.map(r => String(r[1]));
             const euro = /€/.test(raw[0]);
             const nums = raw.map(v => {
@@ -3472,7 +3356,7 @@ export default class PulseLogic extends DCLogic {
           stateColor: running ? LIME : "var(--faint)",
           display: st.timerPreset ? String(st.timerPreset).padStart(2, "0") + ":00" : "00:00",
           ringColor: running ? LIME : "var(--border)",
-          /* A second, inset ring — it turns slowly while the timer runs. */
+          /* A second, inset ring, it turns slowly while the timer runs. */
           innerRingStyle: "position:absolute;inset:9px;border-radius:50%;border:1px solid "
             + (running ? LIME : "var(--border)") + ";opacity:" + (running ? ".8" : ".45"),
           title: task || "No task started",
@@ -3489,7 +3373,7 @@ export default class PulseLogic extends DCLogic {
           buttonLabel: running ? "Pause" : "Start",
           buttonIcon: running ? "M9 5.5v13 M15 5.5v13" : "M7 4.5v15l13-7.5-13-7.5Z",
           toggle: () => this.setState(prev => ({timerRunning: !prev.timerRunning,
-            timerTask: prev.timerTask || "Chase INV-10428 — Dunne & Sons",
+            timerTask: prev.timerTask || "Match received payments",
             timerPreset: prev.timerPreset || 25})),
           reset: () => this.setState({timerRunning:false, timerTask:null, timerPreset:null}),
           complete: () => this.setState({timerRunning:false, timerTask:null})
@@ -3569,7 +3453,7 @@ export default class PulseLogic extends DCLogic {
       }),
       scheduleWeek: ["MON","TUE","WED","THU","FRI","SAT","SUN"].map((d, i) => {
         const n = [3, 3, 3, 4, 4, 0, 1][i];
-        return {label:d, count: n ? String(n) : "—",
+        return {label:d, count: n ? String(n) : "-",
           cellStyle: "margin-top:7px;height:44px;border-radius:var(--r-md,14px);display:flex;align-items:center;justify-content:center;"
             + "font-family:" + MONO + ";font-size:13px;"
             + (i === 1 ? "background:var(--accent-fill,var(--accent));color:var(--on-accent);box-shadow:var(--accent-glow,none);font-weight:500"
@@ -3737,7 +3621,7 @@ export default class PulseLogic extends DCLogic {
           {num:"03", title:"Notifications", icon:"M12 4a5.5 5.5 0 0 0-5.5 5.5v3.2L5 16h14l-1.5-3.3V9.5A5.5 5.5 0 0 0 12 4Z M9.8 19a2.2 2.2 0 0 0 4.4 0",
             statusText:"12 unread", statusColor:"#6ad0f0", open:notifsOpen, toggle:toggle("notifications"),
             isEmpty:false, emptyText:"",
-            rows:[{isCheck:false, title:"Xero token expired — reconnect", hasTag:false},
+            rows:[{isCheck:false, title:"Confirm the Revolut account type", hasTag:false},
               {isCheck:false, title:"Aoife raised a €14,280 approval", hasTag:false},
               {isCheck:false, title:"3 accounts moved off Standard rate", hasTag:false}],
             hasLink:true, linkLabel:"All notifications", linkGo: () => this.setState({showNotifs:true, miniOpen:false}),
@@ -3791,7 +3675,7 @@ export default class PulseLogic extends DCLogic {
       tuneCount: (st.tuneThread || []).filter(m => m.role === "you").length,
       tuneCountLabel: (st.tuneThread || []).filter(m => m.role === "you").length + " change"
         + ((st.tuneThread || []).filter(m => m.role === "you").length === 1 ? "" : "s"),
-      /* Concrete starting points beat an instruction paragraph — one tap writes
+      /* Concrete starting points beat an instruction paragraph, one tap writes
          the line into the prompt the same way typing it would. */
       quickTunes: [
         "Always name the account in the first line",
@@ -3837,7 +3721,7 @@ export default class PulseLogic extends DCLogic {
       }),
       personalities: PERSONALITIES.map(p => ({label:p, style:chip(st.agentSpec.personality === p), pick: () => this.setSpec({personality:p})})),
       answerStyles: ANSWER_STYLES.map(a => ({label:a, style:chip(st.agentSpec.answer === a), pick: () => this.setSpec({answer:a})})),
-      /* ---- skills: every registered tool in one list. Context is not a choice —
+      /* ---- skills: every registered tool in one list. Context is not a choice -
          an agent reads the whole ontology, and anything with an effect still
          waits for a yes, so grouping by effect earned nothing here. ---- */
       skills: SKILL_DEFS.map(d => {
@@ -3938,7 +3822,7 @@ export default class PulseLogic extends DCLogic {
             thread:[{kind:"stamp", text:"Just now"},
               {kind:"agent", text: prev.trained
                 ? "trained and ready. i read the ontology and wrote my own prompt from it. what should i pick up first?"
-                : "created. i have no context yet — train me from the ontology and i'll be useful."}]}].concat(prev.agents)};
+                : "created. i have no context yet, train me from the ontology and i'll be useful."}]}].concat(prev.agents)};
       }),
       approvalsEmpty: approvals.length === 0,
       approvalsEmptyTitle: st.approvalFilter === "Decided" ? "Nothing decided yet"
@@ -3956,7 +3840,7 @@ export default class PulseLogic extends DCLogic {
         ? "position:absolute;left:0;right:0;top:0;height:76px;z-index:3;pointer-events:none;background:var(--accent)"
         : "display:none",
       headerPillStyle: "display:flex;align-items:center;gap:4px;height:54px;padding:5px;box-sizing:border-box;max-width:100%;min-width:0;overflow:hidden;"
-        + ((contextNav.length <= 6 && (st.w - (st.railOpen ? 252 : 68) - 12) >= 780) ? "" : "width:fit-content;margin:0 auto;")
+        + ((contextNav.length <= 4 && (st.w - (st.railOpen ? 252 : 68) - 12) >= 780) ? "" : "width:fit-content;margin:0 auto;")
         + "background:var(--surface);border:1px solid var(--border);border-radius:999px;"
         + "backdrop-filter:blur(24px) saturate(1.4);-webkit-backdrop-filter:blur(24px) saturate(1.4);"
         + "box-shadow:0 1px 0 rgba(255,255,255,.05) inset,0 10px 30px rgba(0,0,0,.28)",
@@ -4017,13 +3901,13 @@ export default class PulseLogic extends DCLogic {
       tabsLoose: !((st.w - (st.railOpen ? 252 : 68)) < 1000 && contextNav.length >= 4),
       tabsTight: (st.w - (st.railOpen ? 252 : 68)) < 1000 && contextNav.length >= 4,
       tabActiveBg: ((st.w - (st.railOpen ? 252 : 68)) < 1000 && contextNav.length >= 4) ? "var(--surface-2)" : "none",
-      searchWrapFlex: (contextNav.length <= 6 && (st.w - (st.railOpen ? 252 : 68) - 12) >= 780) ? "1 1 auto" : "0 0 auto",
+      searchWrapFlex: (contextNav.length <= 4 && (st.w - (st.railOpen ? 252 : 68) - 12) >= 780) ? "1 1 auto" : "0 0 auto",
       barLabel: st.barOpen ? "Collapse the bar" : "Expand the bar",
       barChevronStyle: "transition:transform .3s var(--ease);transform:rotate(" + (st.barOpen ? "0deg" : "180deg") + ")",
       toggleBar: () => this.setState(prev => ({barOpen: !prev.barOpen})),
-      showHint: roomy && st.barOpen,
+      showHint: roomy && st.barOpen && contextNav.length <= 4,
       showSearchText: mid && st.barOpen,
-      showProfileText: roomy,
+      showProfileText: roomy && contextNav.length <= 4,
       // Tabs size to their own labels; NavThumb measures, so equal tracks aren't needed.
       navGroupStyle: "position:relative;display:inline-grid;grid-auto-flow:column;grid-auto-columns:max-content;"
         + "width:max-content;max-width:100%;align-items:center;padding:0;flex:" + (contextNav.length <= 3 ? "none" : "0 1 auto") + ";min-width:0;border-radius:999px;"
@@ -4040,14 +3924,14 @@ export default class PulseLogic extends DCLogic {
       searchStyle: "height:38px;justify-self:center;min-width:0;" + (mid ? "width:100%;padding:0 8px 0 15px;" : "width:44px;justify-content:center;padding:0;"),
       // The bar is one row: the fewer sub-nav segments a page has, the more of the
       // leftover width the search field takes.
-      searchExpanded: contextNav.length <= 6 && (st.w - (st.railOpen ? 252 : 68) - 12) >= 780,
+      searchExpanded: contextNav.length <= 4 && (st.w - (st.railOpen ? 252 : 68) - 12) >= 780,
       searchBarStyle: (() => {
         const segs = contextNav.length;
         // No min-width floor: when the sub-nav pill group is wide, the search
         // must be free to shrink rather than overflow its centring parent and
         // slide under the nav.
         const cap = segs <= 2 ? 520 : segs <= 4 ? 440 : 340;
-        // A real floor so the label always fits — the sub-nav group is now
+        // A real floor so the label always fits, the sub-nav group is now
         // shrinkable, so this comes out of its slack, not out of an overflow.
         const collapsed = !(segs <= 6 && (st.w - (st.railOpen ? 252 : 68) - 12) >= 780);
         if (collapsed) return "flex:none;width:42px;height:42px;display:flex;align-items:center;justify-content:center;padding:0;margin:0 2px;"
@@ -4182,7 +4066,7 @@ export default class PulseLogic extends DCLogic {
           : h < 17 ? ["Good afternoon","Afternoon"]
           : h < 22 ? ["Good evening","Evening"]
           : ["Still going","Night owl mode"];
-        // A goofy one about 1 in 5 times, otherwise the plain greeting — picked
+        // A goofy one about 1 in 5 times, otherwise the plain greeting, picked
         // once per hour and cached, so it doesn't flip on every re-render.
         const goofy = ["Top of the morning","Look who it is","Well if it isn't"];
         const bucket = Math.floor(Date.now() / 3600000);
@@ -4234,7 +4118,7 @@ export default class PulseLogic extends DCLogic {
           confirmSummary: m.confirmSummary || "",
           confirmHash: "sha256 a4f19c…",
           hasActions: done && m.confirm !== true && !!m.actions,
-          actions:(m.actions || []).map(a => ({label:a[0], bg:a[1] ? LIME : "none", color:a[1] ? "var(--on-accent)" : "var(--ink)", border:a[1] ? LIME : "var(--border)", run:() => this.ask(a[0])}))
+          actions:(m.actions || []).map(a => ({label:a[0], bg:a[1] ? LIME : "none", color:a[1] ? "var(--on-accent)" : "var(--ink)", border:a[1] ? LIME : "var(--border)", run:() => (typeof a[2] === "function" ? a[2]() : this.ask(a[0]))}))
         };
       }),
       suggestions: [
@@ -4243,11 +4127,8 @@ export default class PulseLogic extends DCLogic {
         {label:"What visits are booked this week?", run:() => this.ask("What site visits are booked this week?")}
       ],
       activity: [
-        {who:"Aoife Nolan", what:"raised purchase order PO-4471", event:"core.approval.created", when:"18m", dot:LIME},
-        {who:"Helios", what:"flagged Dunne & Sons payment behaviour", event:"core.notification.created", when:"2h", dot:AMBER},
-        {who:"Tom Walsh", what:"created a depot stock check visit", event:"site-visits.visit.created", when:"Yesterday", dot:NEUTRAL},
-        {who:"Overdue reminder", what:"sent 6 of 10 emails", event:"core.automation.failed", when:"08:00", dot:AMBER},
-        {who:"Dispatcher", what:"dead-lettered 2 Xero deliveries", event:"core.event.dead", when:"02:16", dot:RED}
+        {who:"Booking Agent", what:"matched two open slots", event:"Agent proposal", when:"07:45", dot:LIME},
+                                {who:"Demo import", what:"added eight Revolut receipts", event:"Imported", when:"07:28", dot:NEUTRAL}
       ],
       /* Cards, not rows: each one lands on its own spring, newest first, with
          the status colour carried into a soft glow behind its marker. */
@@ -4264,10 +4145,10 @@ export default class PulseLogic extends DCLogic {
       })),
       notifGroups: [["EARLIER TODAY", 0]],
       deployment: [
-        {k:"Client", v:"kilbride", font:MONO},
-        {k:"App name", v:"Kilbride Group Operations", font:"inherit"},
+        {k:"Client", v:"deborah-gough (demo)", font:MONO},
+        {k:"App name", v:"Deborah Gough · Pulse", font:"inherit"},
         {k:"Accent", v:"oklch(0.86 0.19 118)", font:MONO},
-        {k:"Terminology", v:"organisation → Merchant", font:"inherit"},
+        {k:"Terminology", v:"customer → Patient", font:"inherit"},
         {k:"Locale", v:"EUR · Europe/Dublin", font:"inherit"},
         {k:"Helios channels", v:"home, whatsapp", font:MONO}
       ],
@@ -4277,7 +4158,7 @@ export default class PulseLogic extends DCLogic {
         {name:"Installer", grants:"core:task:view, core:task:update, site-visits:visit:*", scope:"own", users:"9"},
         {name:"Counter staff", grants:"core:person:view, core:organisation:view", scope:"location", users:"6"}
       ],
-      team: [{i:"AN",bg:"var(--accent)"},{i:"SB",bg:"#9fd6f0"},{i:"TW",bg:"#e6c78a"}],
+      team: [{i:"DG",bg:"var(--accent-soft)"}],
       paletteOpen: st.paletteOpen, showNotifs: st.showNotifs, query: st.query, draft: st.draft,
       noResults: results.length === 0,
       palScopes, hasQuery: q.length > 0, askPreview: q ? '"' + q + '"' : "",
@@ -4328,7 +4209,7 @@ export default class PulseLogic extends DCLogic {
         : {theme: "light", darkTheme: p.theme}),
       toggleNotifs: () => this.setState({showNotifs:!st.showNotifs}),
       /* Home: the widget rail steps away once a conversation starts, so the
-         thread gets the full width — brought back on demand, not automatically. */
+         thread gets the full width, brought back on demand, not automatically. */
       showRail: st.thread.length === 0 || st.chatRailPinned,
       toggleChatRail: () => this.setState(prev => ({chatRailPinned: !prev.chatRailPinned})),
       chatRailLabel: st.chatRailPinned ? "Hide widgets" : "Widgets",
@@ -4346,12 +4227,12 @@ export default class PulseLogic extends DCLogic {
         {label:"Agents", icon:ICONS.navAgents, go: () => this.setState({page:"Agents"})}
       ],
       composerPrompts: [
-        {label:"Chase the three invoices past 60 days", tag:"CASH", icon:ICONS.insights,
-          run: () => this.ask("Chase the three invoices past 60 days")},
-        {label:"Why did the Xero sync fail this morning?", tag:"HEALTH", icon:ICONS.health,
-          run: () => this.ask("Why did the Xero sync fail this morning?")},
-        {label:"Who should cover tomorrow's Ballincollig visit?", tag:"WORK", icon:ICONS.visits,
-          run: () => this.ask("Who should cover tomorrow's Ballincollig visit?")}
+        {label:"What needs my attention today?", tag:"TODAY", icon:ICONS.insights,
+          run: () => this.ask("What needs my attention today?")},
+        {label:"Show payments that need matching.", tag:"MONEY", icon:ICONS.health,
+          run: () => this.ask("Show payments that need matching.")},
+        {label:"Which messages can I approve?", tag:"INBOX", icon:ICONS.visits,
+          run: () => this.ask("Which messages can I approve?")}
       ].map((p, i) => Object.assign(p, {
         rowStyle: "display:flex;align-items:center;gap:13px;width:100%;padding:10px 14px;background:none;border:0;"
           + (i ? "border-top:1px solid var(--border);" : "")

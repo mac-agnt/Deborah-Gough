@@ -4,13 +4,9 @@ import AgentFace from "../components/AgentFace";
 import NavThumb from "../components/NavThumb";
 import DashboardKpiBand from "./pages/DashboardKpiBand";
 import Home from "./pages/Home";
-import Work from "./pages/Work";
 import Records from "./pages/Records";
 import RecordsFiles from "./pages/RecordsFiles";
 import RecordsOntology from "./pages/RecordsOntology";
-import Activity from "./pages/Activity";
-import Settings from "./pages/Settings";
-import Dashboard from "./pages/Dashboard";
 import Agents from "./pages/Agents";
 import HeliosMini from "./overlays/HeliosMini";
 import WorkViewer from "./overlays/WorkViewer";
@@ -18,6 +14,10 @@ import AgentStudio from "./overlays/AgentStudio";
 import NewRecordDialog from "./overlays/NewRecordDialog";
 import CommandPalette from "./overlays/CommandPalette";
 import BackgroundGallery from "./overlays/BackgroundGallery";
+import ClinicRouter from "../clinic/ClinicRouter";
+import PatientDrawer from "../clinic/pages/PatientDrawer";
+import { ToastHost } from "../clinic/ui";
+import { SNAPSHOT } from "../clinic/format";
 
 type Props = { v: any };
 
@@ -32,14 +32,14 @@ export default function AppShell({ v }: Props) {
         <span style={css(v.railThumbStyle)} />
         <div style={css(cat(v.railRowStyle, "margin-bottom:22px"))}>
           <button className={cx("ix0", "ix1")} onClick={v.toggleRail} title={v.railLabel} style={{"width":"36px","height":"36px","flex":"none","border":"0","borderRadius":"var(--cta-r,11px)","background":"var(--accent-fill,var(--accent))","color":"var(--on-accent)","boxShadow":"var(--accent-glow,none)","cursor":"pointer","display":"flex","alignItems":"center","justifyContent":"center","fontSize":"13px","fontWeight":"600","padding":"0","transition":"transform .2s var(--ease)"}}>
-            {"K"}
+            {"DG"}
           </button>
           <span style={css(v.brandStyle)}>
             <span style={{"display":"block","fontSize":"15px","fontWeight":"600","letterSpacing":"-.3px","color":"var(--ink)"}}>
-              {"Kilbride Group"}
+              {"Deborah Gough"}
             </span>
-            <span style={{"display":"block","marginTop":"2px","fontSize":"9px","fontWeight":"500","letterSpacing":".16em","color":"var(--accent)"}}>
-              {"PULSE · OPERATIONS"}
+            <span style={{"display":"block","marginTop":"2px","fontSize":"8.5px","fontWeight":"500","letterSpacing":".03em","color":"var(--accent)","whiteSpace":"nowrap"}}>
+              {"AESTHETICS CLINIC · MILLTOWN"}
             </span>
           </span>
           {v.railOpen && (
@@ -91,19 +91,22 @@ export default function AppShell({ v }: Props) {
         {v.railOpen && (
           <>
             <div style={{"margin":"6px 4px 4px","padding":"18px 18px 16px","background":"var(--surface)","border":"1px solid var(--border)","borderRadius":"18px"}}>
+              <span className="c-demo-pill" title={"Demonstration with fictional data. Snapshot: " + SNAPSHOT.label + ", " + SNAPSHOT.tz + ". Nothing is sent, paid or published."} style={{"marginBottom":"12px"}}>
+                <i />{"Demo · Fictional data"}
+              </span>
               <div style={{"fontSize":"11px","fontWeight":"600","letterSpacing":".12em","color":"var(--faint)"}}>
                 {"SIGNED IN"}
               </div>
               <div style={{"display":"flex","alignItems":"center","gap":"11px","marginTop":"12px"}}>
                 <div style={{"width":"40px","height":"40px","flex":"none","borderRadius":"999px","background":"var(--accent-soft)","color":"var(--accent)","display":"flex","alignItems":"center","justifyContent":"center","fontSize":"13px","fontWeight":"600"}}>
-                  {"MK"}
+                  {"DG"}
                 </div>
                 <div style={{"minWidth":"0"}}>
                   <div style={{"fontSize":"17px","fontWeight":"600","letterSpacing":"-.3px","color":"var(--ink)","whiteSpace":"nowrap","overflow":"hidden","textOverflow":"ellipsis"}}>
-                    {"Martin Kilbride"}
+                    {"Deborah Gough"}
                   </div>
                   <div style={{"fontSize":"12.5px","color":"var(--faint)","marginTop":"2px","whiteSpace":"nowrap","overflow":"hidden","textOverflow":"ellipsis"}}>
-                    {"Kilbride Group · Owner"}
+                    {"Owner · sole trader"}
                   </div>
                 </div>
               </div>
@@ -133,6 +136,9 @@ export default function AppShell({ v }: Props) {
         )}
         {v.railShut && (
           <>
+            <span className="c-demo-pill" title={"Demo · Fictional data. Snapshot: " + SNAPSHOT.label} style={{"padding":"0 7px","margin":"0 auto 8px"}}>
+              <i />{"Demo"}
+            </span>
             <button className="ix5" onClick={v.goSettings} onPointerEnter={v.enterSettings} onPointerLeave={v.leaveSettings} style={css(v.settingsStyle)}>
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={css(v.settingsGlyphStyle)}>
                 <path d="M5.5 20v-5.5 M5.5 9.5V4 M12 20v-7.5 M12 7.5V4 M18.5 20v-4 M18.5 11V4 M3 12.5h5 M9.5 5.5h5 M16 14h5" />
@@ -143,14 +149,14 @@ export default function AppShell({ v }: Props) {
             </button>
             <div style={css(cat(v.railRowStyle, "margin-top:10px;padding:12px 10px;border-top:1px solid var(--border)"))}>
               <div style={{"width":"40px","height":"40px","flex":"none","borderRadius":"12px","background":"var(--surface-2)","border":"1px solid var(--border)","color":"var(--body)","display":"flex","alignItems":"center","justifyContent":"center","fontSize":"12px","fontWeight":"600","cursor":"pointer"}}>
-                {"MK"}
+                {"DG"}
               </div>
               <span style={css(v.brandStyle)}>
                 <span style={{"display":"block","fontSize":"14px","fontWeight":"500","color":"var(--ink)"}}>
-                  {"Martin Kilbride"}
+                  {"Deborah Gough"}
                 </span>
                 <span style={{"display":"block","marginTop":"2px","fontSize":"12px","color":"var(--faint)"}}>
-                  {"Kilbride Group · Owner"}
+                  {"Owner · sole trader"}
                 </span>
               </span>
             </div>
@@ -311,7 +317,7 @@ export default function AppShell({ v }: Props) {
                         <>
                           <div style={{"minWidth":"0"}}>
                             <div style={{"fontSize":"12px","fontWeight":"500","lineHeight":"1.2","whiteSpace":"nowrap"}}>
-                              {"Martin Kilbride"}
+                              {"Deborah Gough"}
                             </div>
                             <div style={{"fontSize":"10.5px","color":"var(--faint)","lineHeight":"1.2"}}>
                               {"Owner"}
@@ -386,10 +392,9 @@ export default function AppShell({ v }: Props) {
             </div>
           </>
         )}
-        {v.isDashboard && <DashboardKpiBand v={v} />}
+        {v.showKpiBand && <DashboardKpiBand v={v} />}
         <div data-scroll-main="1" style={{"flex":"1","minHeight":"0","overflowY":"auto","overflowX":"hidden","scrollbarWidth":"none"}}>
           {v.isChat && <Home v={v} />}
-          {v.isWork && <Work v={v} />}
           {v.isRecords && <Records v={v} />}
           {v.rec?.isContacts && (
             <>
@@ -452,7 +457,7 @@ export default function AppShell({ v }: Props) {
                           {"No contacts match"}
                         </div>
                         <div style={{"fontSize":"13px","color":"var(--dim)","marginTop":"6px"}}>
-                          {"Try fewer words — it matches on name, role, organisation and tag."}
+                          {"Try fewer words, it matches on name, role, organisation and tag."}
                         </div>
                       </div>
                     </>
@@ -471,7 +476,6 @@ export default function AppShell({ v }: Props) {
           )}
           {v.rec?.isFiles && <RecordsFiles v={v} />}
           {v.rec?.isOntology && <RecordsOntology v={v} />}
-          {v.isActivity && <Activity v={v} />}
           {v.act?.detailOpen && (
             <>
               <div onClick={v.act?.closeDetail} style={{"position":"fixed","inset":"0","zIndex":"68","background":"var(--scrim)","backdropFilter":"blur(6px)","display":"flex","justifyContent":"flex-end"}}>
@@ -575,8 +579,7 @@ export default function AppShell({ v }: Props) {
               </div>
             </>
           )}
-          {v.isSettings && <Settings v={v} />}
-          {v.isDashboard && <Dashboard v={v} />}
+          {v.clinicRoute && <ClinicRouter v={v} />}
           {v.isAgents && <Agents v={v} />}
         </div>
       </main>
@@ -771,7 +774,7 @@ export default function AppShell({ v }: Props) {
                 <>
                   <div style={{"padding":"8px 24px 4px","animation":"expandIn .3s var(--ease) both"}}>
                     <div style={{"fontFamily":"var(--mono)","fontSize":"9.5px","letterSpacing":"0.13em","color":"var(--faint)","marginTop":"10px"}}>
-                      {"PULSE BUILT THIS — EDIT ANYTHING"}
+                      {"PULSE BUILT THIS, EDIT ANYTHING"}
                     </div>
                     <div style={{"marginTop":"14px"}}>
                       {arr(v.builder?.blocks).map((b: any, i145: number) => (
@@ -820,6 +823,8 @@ export default function AppShell({ v }: Props) {
       {v.newRec?.open && <NewRecordDialog v={v} />}
       {v.paletteOpen && <CommandPalette v={v} />}
       {v.bgGallery?.open && <BackgroundGallery v={v} />}
+      <PatientDrawer />
+      <ToastHost />
     </div>
     </>
   );

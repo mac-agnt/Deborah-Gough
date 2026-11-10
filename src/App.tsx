@@ -7,10 +7,10 @@ import AppShell from "./views/AppShell";
    is worked out for you. */
 const config = {
   /** Abstract background behind the Dashboard's KPI band. Hidden in the light theme. */
-  dashboardBackdrop: "#5f8f63",
+  dashboardBackdrop: "#345B57",
   /** Show the Dashboard background at all. */
   kpiBackdropOn: true,
-  /** Wash behind the Records hero (Files and Contacts) and the New record dialog.
+  /** Wash behind the Records hero (Documents) and the New record dialog.
       Leave as "" to use the current theme's own gradient. */
   recordsBackdrop: "",
 };

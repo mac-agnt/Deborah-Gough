@@ -196,7 +196,7 @@ export default function WorkSchedules({ v }: Props) {
               {txt(v.cal?.monthTitle)}
             </div>
             <div style={{"fontSize":"11.5px","color":"var(--dim)","marginTop":"3px"}}>
-              {"The whole month — every routine, automation and scheduled task."}
+              {"The whole month, every routine, automation and scheduled task."}
             </div>
           </div>
           <div style={{"display":"flex","flexWrap":"wrap","gap":"14px"}}>
